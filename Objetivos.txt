@@ -1,0 +1,13 @@
+Objetivos Extra - 35%
+    -Criar salas de Chat 
+    -Enviar mensagens privadas  
+    -Enviar ficheiros
+    -Editar e Apagar mensagens
+
+Funcionalidades a escolha - 30%
+    -Reagir as mensagens 
+    -Denunciar 
+
+    -Adicionar um ficheiro Readme - para explicar as funcionalidades 
+
+Deploy - 15%
