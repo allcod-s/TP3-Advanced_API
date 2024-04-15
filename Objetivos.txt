@@ -1,3 +1,5 @@
+Base - 20 % - Feito 
+
 Objetivos Extra - 35%
     -Criar salas de Chat 
     -Enviar mensagens privadas  

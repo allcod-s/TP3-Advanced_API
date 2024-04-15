@@ -10,12 +10,12 @@ class Message():
         self.message_type = str(message_type)
 
 class ChatMessage(ft.Row):
-    def __init__(self, message: Message,):
+    def __init__(self, message: Message):
         super().__init__() 
         self.message = message
         
-        self.edit_msg = ft.TextField(expand=1)
-        
+        self.edit_msg = ft.TextField(visible=False)
+    
         self.controls = [
             ft.CircleAvatar(
                 content=ft.Text(self.get_initials(message.user_name)),
@@ -24,33 +24,27 @@ class ChatMessage(ft.Row):
             ),
             ft.Column(
                 [
-                    ft.Text(message.user_name, weight="bold"),
+                    #ft.Text(message.user_name, weight="bold"),
                     ft.Text(message.text, selectable=True),
                 ],
                 tight=True,
                 spacing=5,
             ),
             ft.IconButton(
-                    icon=ft.icons.DONE_OUTLINE_OUTLINED,
-                    icon_color=ft.colors.GREEN,
-                    tooltip="Update",
-                    on_click=self.edit_message,
-                    visible=False
-            ),
-            ft.IconButton(
                 icon=ft.icons.EDIT,
                 tooltip="Edit message",
-                on_click=self.edit_message
+                on_click=self.edit_message,
             ),
             ft.IconButton(
                 icon=ft.icons.DELETE,
                 tooltip="Delete message",
                 on_click=self.delete_message
             ),
+            self.edit_msg,
             ft.IconButton(
                 icon=ft.icons.DONE_OUTLINE_OUTLINED,
                 icon_color=ft.colors.GREEN,
-                tooltip="Save",
+                tooltip="Update",
                 on_click=self.save_message,
                 visible=False
             ),
@@ -58,7 +52,7 @@ class ChatMessage(ft.Row):
     
     def get_initials(self, user_name):
         if user_name:
-            return user_name[:1].capitalize()
+            return user_name[:2].capitalize()
         else:
             return "Unknown"  
 
@@ -80,11 +74,66 @@ class ChatMessage(ft.Row):
         ]
         return colors_lookup[hash(user_name) % len(colors_lookup)]
     
-    def save_message(self,e):
-        pass
-    
     def edit_message(self,e):
-        print("ola")
+        user_id = self.page.session.get("user_id")
+        
+        self.edit_msg.value = self.message.text  # Preenche o campo de edição com o texto atual da mensagem
+        #print("edit_msg.value",self.edit_msg.value)
+        
+        if self.message.user_id == user_id:
+            for i,control in enumerate(self.controls):
+                if isinstance(control, ft.IconButton) and control.icon in [ft.icons.EDIT,ft.icons.DELETE]:
+                    control.visible = False  # Esconde o botão de edição
+
+                elif isinstance(control, ft.IconButton) and control.icon == ft.icons.DONE_OUTLINE_OUTLINED:
+                    control.visible = True  # Mostra o botão "done"
+                    self.edit_msg.visible = True
+        
+                #Verifica se é se esta no ft.Colum 
+                elif isinstance(control, ft.Column) and  i == 1: #acede ao control na segunda posição
+                    control.visible = False
+                    
+        self.update()
+ 
+    def save_message(self, e):
+        user_id = self.page.session.get("user_id")
+        
+        if self.message.user_id == user_id:
+            self.message.text = self.edit_msg.value
+            
+            self.update()
+            
+            # Cria uma nova mensagem editada
+            edited_message = Message(message_id=self.message.message_id, user_id=user_id, 
+                                     user_name=self.message.user_name, text=self.edit_msg.value, 
+                                     message_type="edit_message")
+            
+            # Envia a nova mensagem editada para todas as sessões
+            self.page.pubsub.send_all(edited_message)
+            
+            # Remover a mensagem original
+            for control in self.controls:
+                if isinstance(control, ft.Column):
+                    self.controls.remove(control)
+                    break
+            
+            # Criar uma nova instância de ChatMessage com o texto atualizado
+            updated_message = ChatMessage(self.message)
+            
+            # Adicionar a nova mensagem à lista de controles
+            self.controls.insert(1, updated_message)
+            
+            # Atualizar a interface do usuário
+            for control in self.controls:
+                if isinstance(control, ft.IconButton) and control.icon in [ft.icons.EDIT, ft.icons.DELETE]:
+                    control.visible = False
+                elif isinstance(control, ft.IconButton) and control.icon == ft.icons.DONE_OUTLINE_OUTLINED:
+                    control.visible = False
+                    self.edit_msg.visible = False
+                elif isinstance(control,ft.CircleAvatar) and control.content != "":
+                    control.visible = False
+    
+        self.update()
         
     def delete_message(self, e):
         user_id = self.page.session.get("user_id")
@@ -136,14 +185,27 @@ def main(page):
 
     def on_message(message: Message):
         m  = None 
+        
         if message.message_type == "login_message":
             m = ft.Text(message.text, italic=True, color=ft.colors.WHITE54, size=12)
+        
         elif message.message_type == "delete_message":
             # Verifica se a mensagem de exclusão é do usuário atual
             for control in chat.controls:
                 if isinstance(control, ChatMessage) and control.message.message_id == message.message_id:
                     chat.controls.remove(control)
                     m = ft.Text(f"{message.user_name}'s message has been deleted.")
+        elif message.message_type == "edit_message":
+            for control in chat.controls:
+                if isinstance(control, ChatMessage) and control.message.message_id == message.message_id:
+                    for sub_control in control.controls:
+                        if isinstance(sub_control, ft.Column):
+                            for text_control in sub_control.controls:
+                                if isinstance(text_control, ft.Text):
+                                    text_control.value = message.text
+                                    m = ft.Text(f"{message.user_name}'s message has been edited.")
+                    control.update()
+                    
         else:
             m = ChatMessage(message)
             
