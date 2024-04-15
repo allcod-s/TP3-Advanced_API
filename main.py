@@ -1,5 +1,16 @@
 import flet as ft
 import uuid
+from flet import (
+    ElevatedButton,
+    FilePicker,
+    FilePickerResultEvent,
+    Page,
+    Row,
+    Text,
+    icons,
+)
+import msgpack
+import os 
 
 class Message():
     def __init__(self, message_id,user_id,user_name, text, message_type):
@@ -101,8 +112,6 @@ class ChatMessage(ft.Row):
         if self.message.user_id == user_id:
             self.message.text = self.edit_msg.value
             
-            self.update()
-            
             # Cria uma nova mensagem editada
             edited_message = Message(message_id=self.message.message_id, user_id=user_id, 
                                      user_name=self.message.user_name, text=self.edit_msg.value, 
@@ -149,10 +158,13 @@ class ChatMessage(ft.Row):
             # Envia a mensagem de exclusão para todos os usuários
             self.page.pubsub.send_all(delete_message)
             self.update()
+            
     
 def main(page):
+    # Diretório onde os arquivos serão salvos
+    UPLOAD_DIR = "uploads"
     
-    page.title = "Chat - TP3"  
+    page.title = "Chat - TP3"     
 
     def join_chat_click(e):
         if not join_user_name.value:
@@ -182,7 +194,7 @@ def main(page):
             new_message.value = ""
             new_message.focus()
             page.update()
-
+    
     def on_message(message: Message):
         m  = None 
         
@@ -204,8 +216,6 @@ def main(page):
                                 if isinstance(text_control, ft.Text):
                                     text_control.value = message.text
                                     m = ft.Text(f"{message.user_name}'s message has been edited.")
-                    control.update()
-                    
         else:
             m = ChatMessage(message)
             
@@ -214,7 +224,37 @@ def main(page):
             page.update()
             
     page.pubsub.subscribe(on_message)
+    
+    # Pick files dialog
+    def pick_files_result(e: FilePickerResultEvent):
+        # Verifica se o evento contém arquivos selecionados
+        if e.files:
+            for file in e.files:
+                # Ler o conteúdo do arquivo
+                with open(file.name, "rb") as f:
+                    file_data = f.read()
+                
+                # Serializar o conteúdo do arquivo usando o MessagePack
+                serialized_file = msgpack.packb(file_data)
+                
+                # Criar uma nova mensagem com o arquivo serializado como texto
+                new_message = Message(
+                    message_id=str(uuid.uuid4()),
+                    user_id=page.session.get("user_id"),
+                    user_name=page.session.get("user_name"),
+                    text=serialized_file,  # Aqui, estamos usando o conteúdo serializado do arquivo como texto da mensagem
+                    message_type="file_message"
+                )
+                page.pubsub.send_all(new_message)
 
+    file_picker = ft.FilePicker(on_result=pick_files_result)
+
+    def upload_files(e):
+        pass
+
+    # hide all dialogs in overlay
+    page.overlay.extend([file_picker])
+    
     join_user_name = ft.TextField(
         label="Enter your name to join the chat",
         autofocus=True,
@@ -260,12 +300,22 @@ def main(page):
         ),
         ft.Row(
             [
-                new_message,
-                ft.IconButton(
-                    icon=ft.icons.SEND_ROUNDED,
-                    tooltip="Send message",
-                    on_click=send_message_click,
-                ),
+            new_message,
+            ft.IconButton(
+                icon=ft.icons.SEND_ROUNDED,
+                tooltip="Send message",
+                on_click=send_message_click,
+            ),
+            ElevatedButton(
+                text="Pick files",
+                icon=icons.UPLOAD_FILE,
+                on_click=lambda _: file_picker.pick_files(allow_multiple=True),
+            ),
+            ElevatedButton(
+                text="Upload",
+                icon=icons.UPLOAD,
+                on_click=upload_files,
+            ),
             ]
         ),
     )
@@ -274,4 +324,5 @@ if __name__ == "__main__":
     ft.app(target=main, 
             assets_dir="assets",
             view=ft.WEB_BROWSER,
-            port=8550)
+            port=8550,
+            upload_dir="uploads")
