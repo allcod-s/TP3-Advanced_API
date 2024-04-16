@@ -13,12 +13,13 @@ import msgpack
 import os 
 
 class Message():
-    def __init__(self, message_id,user_id,user_name, text, message_type):
+    def __init__(self, message_id,user_id,user_name, text, message_type,recipient_id=None):
         self.message_id = message_id
         self.user_id = user_id
         self.user_name = str(user_name)
         self.text = str(text)
         self.message_type = str(message_type)
+        self.recipient_id=recipient_id
 
 class ChatMessage(ft.Row):
     def __init__(self, message: Message):
@@ -158,13 +159,14 @@ class ChatMessage(ft.Row):
             # Envia a mensagem de exclusão para todos os usuários
             self.page.pubsub.send_all(delete_message)
             self.update()
-            
     
 def main(page):
-    # Diretório onde os arquivos serão salvos
-    UPLOAD_DIR = "uploads"
     
-    page.title = "Chat - TP3"     
+    page.title = "Chat - TP3"    
+     
+    # Lista de usuários conectados
+
+    connected_users = []
 
     def join_chat_click(e):
         if not join_user_name.value:
@@ -172,8 +174,18 @@ def main(page):
             join_user_name.update()
         else:
             user_id = str(uuid.uuid4())  # Gerar um identificador único para o usuário
+            
+            print("user_id",user_id)
+            print("recipient_id",recipient_id)
+            
             page.session.set("user_id", user_id)
             page.session.set("user_name", join_user_name.value)
+            #print("user",user_id)
+            #print("user_name",join_user_name.value)
+            
+            # Adiciona o usuário à lista de usuários conectados como um dicionário {'id': user_id, 'name': join_user_name.value}
+            connected_users.append({'id': user_id, 'name': join_user_name.value})
+            print("connected_users",connected_users)
             
             page.dialog.open = False
             
@@ -181,25 +193,75 @@ def main(page):
             page.pubsub.send_all(Message(message_id=str(uuid.uuid4()),user_id=user_id,user_name=join_user_name.value, text=f"{join_user_name.value} has joined the chat.", message_type="login_message"))
             
             page.update()
-
-    def send_message_click(e):
+    
+    def send_message_click(e, connected_users): # Alteração aqui
         if new_message.value != "":
             user_id = page.session.get("user_id")
             user_name = page.session.get("user_name")
             
+            recipient_id = None
+
+            # Verifica se a mensagem é uma mensagem privada
+            if new_message.value.startswith('@'):
+                # Obtém o nome de usuário mencionado na mensagem
+                recipient_username = new_message.value.split()[0][1:]
+                
+                # Converte ambos os nomes de usuário para minúsculas antes de comparar
+                recipient_username_lower = recipient_username.lower()
+                #print("recipient_username_lower",recipient_username_lower)
+                
+                for user in connected_users:
+                    if recipient_username_lower != user['name'].lower():
+                        recipient_id = user['id']
+                        
+                if recipient_id:
+                    # Verifica se o ID do destinatário corresponde ao ID do usuário atual
+                    if recipient_id == user_id:
+                        print("Você não pode enviar uma mensagem privada para si mesmo.")
+                
+                        # Código para enviar a mensagem privada aqui
+                        message_type = "private_message"
+                else:
+                    message_type = "chat_message"
+            
             # Gera um ID único para a mensagem
             message_id = str(uuid.uuid4())
+                        
+            # Verifica se a mensagem é pública ou privada
+            message_type = "private_message" if recipient_id else "chat_message"
+            #print("message_type",message_type)
             
-            page.pubsub.send_all(Message(message_id=message_id,user_id=user_id, user_name=user_name, text=new_message.value, message_type="chat_message"))
+            message = Message(
+                message_id=message_id,
+                user_id=user_id,
+                user_name=user_name,
+                text=new_message.value,
+                message_type=message_type,
+                recipient_id=recipient_id  # Adicionei o recipient_id aqui
+            )
+
+            page.pubsub.send_all(message)
+
             new_message.value = ""
             new_message.focus()
             page.update()
+        
     
     def on_message(message: Message):
         m  = None 
         
+        user_id = page.session.get("user_id")
+        
         if message.message_type == "login_message":
             m = ft.Text(message.text, italic=True, color=ft.colors.WHITE54, size=12)
+        
+        elif message.message_type == "private_message":
+            
+            if user_id == message.user_id or user_id == message.recipient_id:
+                m = ChatMessage(message)
+        
+        elif message.message_type == "chat_message":
+            m = ChatMessage(message)
         
         elif message.message_type == "delete_message":
             # Verifica se a mensagem de exclusão é do usuário atual
@@ -207,6 +269,7 @@ def main(page):
                 if isinstance(control, ChatMessage) and control.message.message_id == message.message_id:
                     chat.controls.remove(control)
                     m = ft.Text(f"{message.user_name}'s message has been deleted.")
+        
         elif message.message_type == "edit_message":
             for control in chat.controls:
                 if isinstance(control, ChatMessage) and control.message.message_id == message.message_id:
@@ -224,6 +287,7 @@ def main(page):
             page.update()
             
     page.pubsub.subscribe(on_message)
+    
     
     # Pick files dialog
     def pick_files_result(e: FilePickerResultEvent):
@@ -248,9 +312,6 @@ def main(page):
                 page.pubsub.send_all(new_message)
 
     file_picker = ft.FilePicker(on_result=pick_files_result)
-
-    def upload_files(e):
-        pass
 
     # hide all dialogs in overlay
     page.overlay.extend([file_picker])
@@ -283,7 +344,7 @@ def main(page):
         max_lines=5,
         filled=True,
         expand=True,
-        on_submit=send_message_click,
+        on_submit=lambda e: send_message_click(e, connected_users),  # Alteração aqui
     )
 
     page.add(
@@ -304,18 +365,18 @@ def main(page):
             ft.IconButton(
                 icon=ft.icons.SEND_ROUNDED,
                 tooltip="Send message",
-                on_click=send_message_click,
+                on_click=lambda e: send_message_click(e, connected_users),  # Alteração aqui
             ),
             ElevatedButton(
                 text="Pick files",
                 icon=icons.UPLOAD_FILE,
                 on_click=lambda _: file_picker.pick_files(allow_multiple=True),
             ),
-            ElevatedButton(
-                text="Upload",
-                icon=icons.UPLOAD,
-                on_click=upload_files,
-            ),
+            #ElevatedButton(
+             #   text="Upload",
+              #  icon=icons.UPLOAD,
+               # on_click=upload_files,
+           #),
             ]
         ),
     )
