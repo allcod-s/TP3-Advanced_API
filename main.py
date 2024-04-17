@@ -13,13 +13,13 @@ import msgpack
 import os 
 
 class Message():
-    def __init__(self, message_id,user_id,user_name, text, message_type,recipient_id=None):
+    def __init__(self, message_id,user_id,user_name, text, message_type,recipient: str=None):
         self.message_id = message_id
         self.user_id = user_id
         self.user_name = str(user_name)
         self.text = str(text)
         self.message_type = str(message_type)
-        self.recipient_id=recipient_id
+        self.recipient = recipient
 
 class ChatMessage(ft.Row):
     def __init__(self, message: Message):
@@ -163,10 +163,6 @@ class ChatMessage(ft.Row):
 def main(page):
     
     page.title = "Chat - TP3"    
-     
-    # Lista de usuários conectados
-
-    connected_users = []
 
     def join_chat_click(e):
         if not join_user_name.value:
@@ -175,17 +171,10 @@ def main(page):
         else:
             user_id = str(uuid.uuid4())  # Gerar um identificador único para o usuário
             
-            print("user_id",user_id)
-            print("recipient_id",recipient_id)
-            
             page.session.set("user_id", user_id)
             page.session.set("user_name", join_user_name.value)
             #print("user",user_id)
             #print("user_name",join_user_name.value)
-            
-            # Adiciona o usuário à lista de usuários conectados como um dicionário {'id': user_id, 'name': join_user_name.value}
-            connected_users.append({'id': user_id, 'name': join_user_name.value})
-            print("connected_users",connected_users)
             
             page.dialog.open = False
             
@@ -194,50 +183,47 @@ def main(page):
             
             page.update()
     
-    def send_message_click(e, connected_users): # Alteração aqui
+    def send_message_click(e): 
         if new_message.value != "":
             user_id = page.session.get("user_id")
             user_name = page.session.get("user_name")
             
-            recipient_id = None
+            message_text = new_message.value
+            
+            # Initialize recipient, text, and message_type variables
+            recipient = None
+            text = message_text
+            message_type = "chat_message"
 
             # Verifica se a mensagem é uma mensagem privada
             if new_message.value.startswith('@'):
                 # Obtém o nome de usuário mencionado na mensagem
-                recipient_username = new_message.value.split()[0][1:]
+                parts = new_message.value.split(" ", 1)
                 
-                # Converte ambos os nomes de usuário para minúsculas antes de comparar
-                recipient_username_lower = recipient_username.lower()
-                #print("recipient_username_lower",recipient_username_lower)
-                
-                for user in connected_users:
-                    if recipient_username_lower != user['name'].lower():
-                        recipient_id = user['id']
-                        
-                if recipient_id:
-                    # Verifica se o ID do destinatário corresponde ao ID do usuário atual
-                    if recipient_id == user_id:
-                        print("Você não pode enviar uma mensagem privada para si mesmo.")
-                
-                        # Código para enviar a mensagem privada aqui
-                        message_type = "private_message"
-                else:
-                    message_type = "chat_message"
+                if len(parts) >= 2:
+                    recipient = parts[0][1:]   # Remove o "@" do nome de usuário
+                    text = parts[1]  # Reassemble the remaining parts as the message text
+                    message_type = "private_message"
+            else:   
+                #recipient = None
+                #text = message_text
+                #message_type = "chat_message"
+                pass
+            
+            print("Recipient:", recipient)  # Check recipient
+            print("Message Text:", text)     # Check message text
+            print("Message Type:", message_type)  # Check message type
             
             # Gera um ID único para a mensagem
             message_id = str(uuid.uuid4())
                         
-            # Verifica se a mensagem é pública ou privada
-            message_type = "private_message" if recipient_id else "chat_message"
-            #print("message_type",message_type)
-            
             message = Message(
                 message_id=message_id,
                 user_id=user_id,
                 user_name=user_name,
                 text=new_message.value,
                 message_type=message_type,
-                recipient_id=recipient_id  # Adicionei o recipient_id aqui
+                recipient=recipient
             )
 
             page.pubsub.send_all(message)
@@ -251,16 +237,17 @@ def main(page):
         m  = None 
         
         user_id = page.session.get("user_id")
+        user_name = page.session.get("user_name")
         
         if message.message_type == "login_message":
             m = ft.Text(message.text, italic=True, color=ft.colors.WHITE54, size=12)
         
         elif message.message_type == "private_message":
-            
-            if user_id == message.user_id or user_id == message.recipient_id:
+            # Check if the message is intended for the current user
+            if message.recipient == user_name or message.user_name == user_name:
                 m = ChatMessage(message)
-        
-        elif message.message_type == "chat_message":
+
+        elif message.message_type == "chat_message" and message.recipient is None:
             m = ChatMessage(message)
         
         elif message.message_type == "delete_message":
@@ -344,7 +331,7 @@ def main(page):
         max_lines=5,
         filled=True,
         expand=True,
-        on_submit=lambda e: send_message_click(e, connected_users),  # Alteração aqui
+        on_submit=send_message_click ,
     )
 
     page.add(
@@ -365,7 +352,7 @@ def main(page):
             ft.IconButton(
                 icon=ft.icons.SEND_ROUNDED,
                 tooltip="Send message",
-                on_click=lambda e: send_message_click(e, connected_users),  # Alteração aqui
+                on_click=send_message_click  # Alteração aqui
             ),
             ElevatedButton(
                 text="Pick files",
