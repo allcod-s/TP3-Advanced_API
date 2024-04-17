@@ -1,5 +1,6 @@
 import flet as ft
 import uuid
+from typing import Dict
 from flet import (
     ElevatedButton,
     FilePicker,
@@ -8,17 +9,27 @@ from flet import (
     Row,
     Text,
     icons,
+    ProgressRing,
 )
 import msgpack
 import os 
 
+
+# Variável global para armazenar as salas de chat
+chat_rooms = {
+    1: {"name": "private chat", "messages": []},
+    2: {"name": "Chat 1", "messages": []},
+    3: {"name": "Chat 2", "messages": []},
+}
+
 class Message():
-    def __init__(self, message_id,user_id,user_name, text, message_type,recipient: str=None):
+    def __init__(self, message_id,user_id,user_name, text, message_type,room_id=None,recipient: str=None):
         self.message_id = message_id
         self.user_id = user_id
         self.user_name = str(user_name)
         self.text = str(text)
         self.message_type = str(message_type)
+        self.room_id = room_id
         self.recipient = recipient
 
 class ChatMessage(ft.Row):
@@ -85,7 +96,7 @@ class ChatMessage(ft.Row):
             ft.colors.YELLOW,
         ]
         return colors_lookup[hash(user_name) % len(colors_lookup)]
-    
+
     def edit_message(self,e):
         user_id = self.page.session.get("user_id")
         
@@ -182,19 +193,86 @@ def main(page):
             page.pubsub.send_all(Message(message_id=str(uuid.uuid4()),user_id=user_id,user_name=join_user_name.value, text=f"{join_user_name.value} has joined the chat.", message_type="login_message"))
             
             page.update()
+            
+    def send_chat_update():
+        user_id = page.session.get("user_id")
+        message_id = str(uuid.uuid4())  # Generate a unique message_id
+        page.pubsub.send_all(Message(message_id=message_id,
+                                    user_id=user_id, 
+                                    user_name="System", 
+                                    text="New chat room created", 
+                                    message_type="chat_update"))
     
+    def close_dlg_confirm(e):
+        chat_name_field = dlg_modal.actions[0]  # O primeiro elemento das ações é o campo de texto
+        if chat_name_field.value:
+            chat_name = chat_name_field.value
+            # Gere um ID único para a sala de chat (pode ser simplesmente o número de salas criadas até agora)
+            chat_id = len(chat_rooms) + 1
+            # Adicione a nova sala ao dicionário
+            chat_rooms[chat_id] = {"name": chat_name, "messages": []}  # Adicione mais detalhes conforme necessário
+            # Print para verificar se a sala foi criada com sucesso
+            print("Sala de chat adicionada com sucesso:")
+            print(chat_rooms[chat_id])
+            # Atualize a lista de salas de chat
+            room_list.controls.clear()
+            room_list.controls.extend([
+                ft.ElevatedButton(f"{room_id}: {chat_rooms[room_id]['name']}", on_click=lambda e, room_id=room_id: join_room(room_id))
+                for room_id in chat_rooms
+            ])
+            # Envie uma mensagem de atualização para todos os clientes conectados
+            send_chat_update()  # Enviar mensagem de atualização
+        dlg_modal.actions[0].value = ""  # Limpa o valor do campo de texto
+        dlg_modal.open = False
+        page.update()
+
+    def close_dlg_cancel(e):
+        dlg_modal.actions[0].value = ""  # Limpa o valor do campo de texto
+        dlg_modal.open = False
+        page.update()
+
+    dlg_modal = ft.AlertDialog(
+        modal=True,
+        title=ft.Text("Create Chat Room"),
+        actions=[
+            ft.TextField(label="Enter your chat name"),
+            ft.Text("", height=10),  # Empty text for spacing
+            Row([
+                ft.ElevatedButton("Confirm", on_click=close_dlg_confirm),
+                ft.ElevatedButton("Cancel", on_click=close_dlg_cancel),
+            ]),
+        ],
+        actions_alignment=ft.MainAxisAlignment.END,
+        on_dismiss=lambda e: print("Modal dialog dismissed!"),
+    )
+
+    def create_chat_room_modal(e):
+        page.dialog = dlg_modal
+        dlg_modal.open = True
+        page.update()
+    
+
     def send_message_click(e): 
         if new_message.value != "":
             user_id = page.session.get("user_id")
             user_name = page.session.get("user_name")
+            active_room_id = page.session.get("active_room")
             
             message_text = new_message.value
+            room_id = active_room_id 
             
             # Initialize recipient, text, and message_type variables
             recipient = None
             text = message_text
             message_type = "chat_message"
-
+            
+            # Verifica se o usuário está em uma sala onde não é permitido enviar mensagens privadas
+            if active_room_id == 1:  # Assuming room with ID 1 is the private chat room
+                # Se estiver na sala de bate-papo privada, não permita mensagens privadas
+                print("You cannot send private messages in this room.")
+                return
+            
+            
             # Verifica se a mensagem é uma mensagem privada
             if new_message.value.startswith('@'):
                 # Obtém o nome de usuário mencionado na mensagem
@@ -204,29 +282,36 @@ def main(page):
                     recipient = parts[0][1:]   # Remove o "@" do nome de usuário
                     text = parts[1]  # Reassemble the remaining parts as the message text
                     message_type = "private_message"
+                    
+                    # Define o room_id para indicar que é uma mensagem privada
+                    room_id = active_room_id
             else:   
                 pass
             
-            #print("Recipient:", recipient)  # Check recipient
-            #print("Message Text:", text)     # Check message text
-            #print("Message Type:", message_type)  # Check message type
+            print("Recipient:", recipient)  # Check recipient
+            print("Message Text:", text)     # Check message text
+            print("Message Type:", message_type)  # Check message type
             
             # Gera um ID único para a mensagem
             message_id = str(uuid.uuid4())
-                        
-            message = Message(
-                message_id=message_id,
-                user_id=user_id,
-                user_name=user_name,
-                text=new_message.value,
-                message_type=message_type,
-                recipient=recipient
-            )
+             
+            if active_room_id is not None:
+                
+                message = Message(message_id=str(uuid.uuid4()), 
+                                            user_id=page.session.get("user_id"), 
+                                            user_name=page.session.get("user_name"), 
+                                            text=new_message.value, 
+                                            recipient=recipient,
+                                            message_type=message_type,
+                                            room_id=room_id)    
 
-            page.pubsub.send_all(message)
+                chat_rooms[active_room_id]["messages"].append(message)
+
+                page.pubsub.send_all(message)
 
             new_message.value = ""
             new_message.focus()
+            join_room(active_room_id) 
             page.update()
         
     
@@ -235,14 +320,19 @@ def main(page):
         
         user_id = page.session.get("user_id")
         user_name = page.session.get("user_name")
+        room_id = message.room_id 
+        print("room_id", room_id)
+        active_room_id = page.session.get("active_room_id")
+        print("active_room_id", active_room_id)
         
         if message.message_type == "login_message":
             m = ft.Text(message.text, italic=True, color=ft.colors.WHITE54, size=12)
         
         elif message.message_type == "private_message":
             # Check if the message is intended for the current user
-            if message.recipient == user_name or message.user_name == user_name:
-                m = ChatMessage(message)
+            if message.room_id == active_room_id:
+                if message.recipient == user_name or message.user_name == user_name:
+                    m = ChatMessage(message)
 
         elif message.message_type == "chat_message" and message.recipient is None:
             m = ChatMessage(message)
@@ -263,6 +353,15 @@ def main(page):
                                 if isinstance(text_control, ft.Text):
                                     text_control.value = message.text
                                     m = ft.Text(f"{message.user_name}'s message has been edited.")
+                                    
+        elif message.message_type == "chat_update":
+            # Atualize a lista de salas de chat
+            room_list.controls.clear()
+            room_list.controls.extend([
+                ft.ElevatedButton(f"{room_id}: {chat_rooms[room_id]['name']}", on_click=lambda e, room_id=room_id: join_room(room_id))
+                for room_id in chat_rooms
+            ])
+       
         else:
             m = ChatMessage(message)
             
@@ -272,6 +371,20 @@ def main(page):
             
     page.pubsub.subscribe(on_message)
     
+    def join_room(room_id):
+        #print("Joining room:", room_id) 
+        active_room = chat_rooms.get(room_id)
+        if active_room:
+            page.session.set("active_room", room_id)
+            page.session.set("active_room_id", room_id) 
+            #print("Active room set:", room_id) 
+            chat.controls.clear()
+            for message in active_room["messages"]:
+                chat.controls.append(ChatMessage(message))
+        else:
+            # Sala de chat não encontrada ou erro
+            pass
+        page.update()
     
     # Pick files dialog
     def pick_files_result(e: FilePickerResultEvent):
@@ -299,7 +412,7 @@ def main(page):
 
     # hide all dialogs in overlay
     page.overlay.extend([file_picker])
-    
+
     join_user_name = ft.TextField(
         label="Enter your name to join the chat",
         autofocus=True,
@@ -319,6 +432,16 @@ def main(page):
         spacing=10,
         auto_scroll=True,
     )
+    
+    room_list = ft.ListView(
+        expand=False,
+        spacing=10,
+    )
+    
+    room_list.controls = [
+        ft.ElevatedButton(f"{room_id}: {chat_rooms[room_id]['name']}", on_click=lambda e, room_id=room_id: join_room(room_id))
+        for room_id in chat_rooms
+    ]
 
     new_message = ft.TextField(
         hint_text="Write a message...",
@@ -347,6 +470,11 @@ def main(page):
             [
             new_message,
             ft.IconButton(
+                    icon=ft.icons.ADD_CIRCLE_OUTLINE,
+                    tooltip="Create Chat Room",
+                    on_click=create_chat_room_modal
+            ),
+            ft.IconButton(
                 icon=ft.icons.SEND_ROUNDED,
                 tooltip="Send message",
                 on_click=send_message_click  # Alteração aqui
@@ -364,6 +492,7 @@ def main(page):
             ]
         ),
     )
+    page.add(room_list)
 
 if __name__ == "__main__":
     ft.app(target=main, 
